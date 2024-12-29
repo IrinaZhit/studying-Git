@@ -1,208 +1,292 @@
 import java.io.*;
 import java.util.*;
 
-class TreeNode {
-    char value;
+/**
+ * Представление узла с частотой и символом для алгоритма Хаффмана.
+ */
+class TreeNode implements Comparable<TreeNode> {
+    byte character;
     int frequency;
-    TreeNode leftBranch;
-    TreeNode rightBranch;
+    TreeNode left, right;
 
-    TreeNode(char value, int frequency) {
-        this.value = value;
+    public TreeNode(byte character, int frequency) {
+        this.character = character;
         this.frequency = frequency;
     }
 
-    TreeNode(char value, int frequency, TreeNode leftBranch, TreeNode rightBranch) {
-        this.value = value;
+    public TreeNode(int frequency, TreeNode left, TreeNode right) {
+        this.character = 0;  // У узла без символа
         this.frequency = frequency;
-        this.leftBranch = leftBranch;
-        this.rightBranch = rightBranch;
+        this.left = left;
+        this.right = right;
+    }
+
+    @Override
+    public int compareTo(TreeNode other) {
+        return Integer.compare(this.frequency, other.frequency);  // Сравниваем по частоте
+    }
+
+    public boolean isLeaf() {
+        return left == null && right == null;
     }
 }
 
-class HuffmanCoding {
-    private static final Map<Character, String> codeTable = new HashMap<>();
+/**
+ * Основной класс для работы с алгоритмом Хаффмана, который поддерживает
+ * как сжатие, так и разжатие.
+ */
+public class HuffmanProcessor {
 
-    public static void compress(String inputText, String outputFilePath) throws IOException {
-        TreeNode treeRoot = buildTree(inputText);
-        generateCode(treeRoot, "", codeTable);
+    private static Map<Byte, String> encodingTable = new HashMap<>();
+    
+    // Кодирование данных из массива байтов и запись в файл
+    public static void compress(byte[] data, String outputFile) throws IOException {
+        TreeNode root = createHuffmanTree(data);
+        buildEncodingTable(root, "");  // Создаем таблицу кодов для каждого символа
+
+        StringBuilder encodedData = new StringBuilder();
+        for (byte b : data) {
+            encodedData.append(encodingTable.get(b));  // Получаем код символа
+        }
+
+        saveToFile(outputFile, encodedData.toString());  // Записываем результат в файл
+    }
+
+    // Декодирование данных из файла и запись в другой файл
+    public static void decompress(String inputFile, String outputFile) throws IOException {
+        try (FileInputStream inputStream = new FileInputStream(inputFile);
+             FileOutputStream outputStream = new FileOutputStream(outputFile)) {
+
+            loadEncodingTable(inputStream);  // Загружаем таблицу кодов
+            String encodedText = readEncodedText(inputStream);  // Читаем закодированные данные
+
+            byte[] decodedBytes = decode(encodedText);  // Декодируем данные
+            outputStream.write(decodedBytes);  // Записываем результат в файл
+        }
+    }
+
+    // Построение дерева Хаффмана из входных данных
+    private static TreeNode createHuffmanTree(byte[] data) {
+        Map<Byte, Integer> frequencyMap = new HashMap<>();
+        for (byte b : data) {
+            frequencyMap.put(b, frequencyMap.getOrDefault(b, 0) + 1);  // Подсчет частот
+        }
+
+        PriorityQueue<TreeNode> priorityQueue = new PriorityQueue<>();
+        for (Map.Entry<Byte, Integer> entry : frequencyMap.entrySet()) {
+            priorityQueue.add(new TreeNode(entry.getKey(), entry.getValue()));  // Заполнение очереди
+        }
+
+        while (priorityQueue.size() > 1) {
+            TreeNode left = priorityQueue.poll();
+            TreeNode right = priorityQueue.poll();
+            TreeNode mergedNode = new TreeNode(left.frequency + right.frequency, left, right);
+            priorityQueue.add(mergedNode);  // Объединяем два узла в новый
+        }
+
+        return priorityQueue.peek();  // Корень дерева
+    }
+
+    // Рекурсивное построение таблицы кодов
+    private static void buildEncodingTable(TreeNode node, String code) {
+        if (node == null) return;
+
+        if (node.isLeaf()) {
+            encodingTable.put(node.character, code);  // Присваиваем код символу
+        }
+
+        buildEncodingTable(node.left, code + "0");  // Левый узел - 0
+        buildEncodingTable(node.right, code + "1");  // Правый узел - 1
+    }
+
+    // Запись закодированных данных в файл
+    private static void saveToFile(String filePath, String encodedData) throws IOException {
+        try (FileOutputStream fileOutput = new FileOutputStream(filePath)) {
+            saveEncodingTable(fileOutput);  // Записываем таблицу кодов
+            saveEncodedText(fileOutput, encodedData);  // Записываем закодированные данные
+        }
+    }
+
+    // Запись таблицы кодов в файл
+    private static void saveEncodingTable(FileOutputStream fileOutput) throws IOException {
+        fileOutput.write(encodingTable.size());  // Записываем количество записей в таблице
+
+        for (Map.Entry<Byte, String> entry : encodingTable.entrySet()) {
+            byte character = entry.getKey();
+            String code = entry.getValue();
+
+            fileOutput.write(character);  // Записываем символ
+            fileOutput.write(code.length());  // Записываем длину кода
+
+            int byteBuffer = 0;
+            int bitCount = 0;
+
+            for (char c : code.toCharArray()) {
+                if (c == '1') {
+                    byteBuffer |= (1 << (7 - bitCount));  // Добавляем бит
+                }
+                bitCount++;
+                if (bitCount == 8) {  // Если собрали 8 бит, записываем
+                    fileOutput.write(byteBuffer);
+                    byteBuffer = 0;
+                    bitCount = 0;
+                }
+            }
+
+            if (bitCount > 0) {
+                fileOutput.write(byteBuffer);  // Записываем остаточные биты
+            }
+        }
+    }
+
+    // Запись закодированных данных в файл
+    private static void saveEncodedText(FileOutputStream fileOutput, String encodedData) throws IOException {
+        int length = encodedData.length();
+        fileOutput.write((length >>> 24) & 0xFF);
+        fileOutput.write((length >>> 16) & 0xFF);
+        fileOutput.write((length >>> 8) & 0xFF);
+        fileOutput.write(length & 0xFF);
+
+        int byteBuffer = 0;
+        int bitCounter = 0;
+
+        for (char bit : encodedData.toCharArray()) {
+            if (bit == '1') byteBuffer |= (1 << (7 - bitCounter));
+            bitCounter++;
+
+            if (bitCounter == 8) {
+                fileOutput.write(byteBuffer);
+                byteBuffer = 0;
+                bitCounter = 0;
+            }
+        }
+
+        if (bitCounter > 0) {
+            fileOutput.write(byteBuffer);  // Записываем остаточный байт
+        }
+    }
+
+    // Загрузка таблицы кодов из файла
+    private static void loadEncodingTable(FileInputStream inputStream) throws IOException {
+        int entryCount = inputStream.read();
+        if (entryCount == -1) throw new IOException("Ошибка при чтении таблицы кодов.");
+
+        for (int i = 0; i < entryCount; i++) {
+            int character = inputStream.read();
+            if (character == -1) throw new IOException("Ошибка при чтении символа.");
+
+            byte byteChar = (byte) character;
+            int codeLength = inputStream.read();
+            if (codeLength == -1) throw new IOException("Ошибка при чтении длины кода.");
+
+            StringBuilder codeBuilder = new StringBuilder();
+            int byteValue = 0;
+            int bitIndex = 0;
+
+            while (bitIndex < codeLength) {
+                if (bitIndex % 8 == 0) {
+                    byteValue = inputStream.read();
+                    if (byteValue == -1) throw new IOException("Ошибка при чтении бита.");
+                }
+
+                int currentBit = (byteValue >> (7 - (bitIndex % 8))) & 1;
+                codeBuilder.append(currentBit == 1 ? '1' : '0');
+                bitIndex++;
+            }
+
+            encodingTable.put(byteChar, codeBuilder.toString());  // Сохраняем код
+        }
+    }
+
+    // Чтение закодированных данных из файла
+    private static String readEncodedText(FileInputStream inputStream) throws IOException {
+        byte[] sizeBytes = new byte[4];
+        inputStream.read(sizeBytes);
+
+        int totalBits = ((sizeBytes[0] & 0xFF) << 24) |
+                        ((sizeBytes[1] & 0xFF) << 16) |
+                        ((sizeBytes[2] & 0xFF) << 8) |
+                        (sizeBytes[3] & 0xFF);
 
         StringBuilder encodedText = new StringBuilder();
-        for (char character : inputText.toCharArray()) {
-            encodedText.append(codeTable.get(character));
-        }
+        int byteValue;
+        int bitsRead = 0;
 
-        saveCompressedData(outputFilePath, encodedText.toString());
-    }
-
-    public static void decompress(String inputFilePath, String outputFilePath) throws IOException {
-        try (FileInputStream inputFile = new FileInputStream(inputFilePath);
-             FileOutputStream outputFile = new FileOutputStream(outputFilePath)) {
-
-            restoreCodeTable(inputFile);
-            String encodedData = readEncodedContent(inputFile);
-            String decodedData = decodeData(encodedData);
-
-            outputFile.write(decodedData.getBytes());
-        }
-    }
-
-    private static void restoreCodeTable(FileInputStream inputStream) throws IOException {
-        int mappingsCount = inputStream.read();
-        for (int i = 0; i < mappingsCount; i++) {
-            char character = (char) inputStream.read();
-            int codeLength = inputStream.read();
-
-            StringBuilder codeSequence = new StringBuilder();
-            for (int j = 0; j < codeLength; j++) {
-                if (j % 8 == 0) inputStream.read();
-                codeSequence.append((inputStream.read() & (1 << (7 - (j % 8)))) != 0 ? '1' : '0');
-            }
-
-            codeTable.put(character, codeSequence.toString());
-        }
-    }
-
-    private static String readEncodedContent(FileInputStream inputStream) throws IOException {
-        int totalBits = inputStream.read();
-        StringBuilder bitStream = new StringBuilder();
-        int bytesRead, bitsProcessed = 0;
-
-        while ((bytesRead = inputStream.read()) != -1) {
-            for (int bit = 7; bit >= 0 && bitsProcessed < totalBits; bit--) {
-                bitStream.append((bytesRead & (1 << bit)) != 0 ? '1' : '0');
-                bitsProcessed++;
+        while ((byteValue = inputStream.read()) != -1 && bitsRead < totalBits) {
+            for (int i = 7; i >= 0 && bitsRead < totalBits; i--) {
+                encodedText.append(((byteValue >> i) & 1) == 1 ? '1' : '0');
+                bitsRead++;
             }
         }
 
-        return bitStream.toString();
+        return encodedText.toString();
     }
 
-    private static String decodeData(String encodedData) {
-        Map<String, Character> reverseTable = new HashMap<>();
-        codeTable.forEach(reverseTable::put);
+    // Декодирование строки с использованием таблицы кодов
+    private static byte[] decode(String encodedData) {
+        Map<String, Byte> reversedTable = new HashMap<>();
+        for (Map.Entry<Byte, String> entry : encodingTable.entrySet()) {
+            reversedTable.put(entry.getValue(), entry.getKey());  // Обратная таблица
+        }
 
-        StringBuilder decodedOutput = new StringBuilder();
+        List<Byte> decodedBytes = new ArrayList<>();
         StringBuilder currentCode = new StringBuilder();
 
         for (char bit : encodedData.toCharArray()) {
             currentCode.append(bit);
-            if (reverseTable.containsKey(currentCode.toString())) {
-                decodedOutput.append(reverseTable.get(currentCode.toString()));
-                currentCode.setLength(0);
+            if (reversedTable.containsKey(currentCode.toString())) {
+                decodedBytes.add(reversedTable.get(currentCode.toString()));  // Добавляем символ
+                currentCode.setLength(0);  // Сбрасываем текущий код
             }
         }
 
-        return decodedOutput.toString();
+        byte[] result = new byte[decodedBytes.size()];
+        for (int i = 0; i < decodedBytes.size(); i++) {
+            result[i] = decodedBytes.get(i);
+        }
+
+        return result;
     }
 
-    private static void saveCompressedData(String outputFilePath, String encodedData) throws IOException {
-        try (FileOutputStream outputStream = new FileOutputStream(outputFilePath)) {
-            saveCodeTable(outputStream);
-            writeEncodedContent(outputStream, encodedData);
-        }
-    }
-
-    private static void saveCodeTable(FileOutputStream outputStream) throws IOException {
-        outputStream.write(codeTable.size());
-
-        for (Map.Entry<Character, String> entry : codeTable.entrySet()) {
-            char character = entry.getKey();
-            String code = entry.getValue();
-
-            outputStream.write(character);
-            outputStream.write(code.length());
-
-            int buffer = 0, bitCounter = 0;
-            for (char bit : code.toCharArray()) {
-                buffer = (buffer << 1) | (bit == '1' ? 1 : 0);
-                bitCounter++;
-                if (bitCounter == 8) {
-                    outputStream.write(buffer);
-                    buffer = 0;
-                    bitCounter = 0;
-                }
-            }
-
-            if (bitCounter > 0) {
-                outputStream.write(buffer << (8 - bitCounter));
-            }
-        }
-    }
-
-    private static void writeEncodedContent(FileOutputStream outputStream, String encodedData) throws IOException {
-        outputStream.write(encodedData.length());
-        int buffer = 0, bitCount = 0;
-
-        for (char bit : encodedData.toCharArray()) {
-            buffer = (buffer << 1) | (bit == '1' ? 1 : 0);
-            bitCount++;
-            if (bitCount == 8) {
-                outputStream.write(buffer);
-                buffer = 0;
-                bitCount = 0;
-            }
-        }
-
-        if (bitCount > 0) {
-            outputStream.write(buffer << (8 - bitCount));
-        }
-    }
-
-    private static TreeNode buildTree(String text) {
-        Map<Character, Integer> frequencyMap = new HashMap<>();
-        for (char character : text.toCharArray()) {
-            frequencyMap.put(character, frequencyMap.getOrDefault(character, 0) + 1);
-        }
-
-        PriorityQueue<TreeNode> queue = new PriorityQueue<>(Comparator.comparingInt(node -> node.frequency));
-        frequencyMap.forEach((character, frequency) -> queue.add(new TreeNode(character, frequency)));
-
-        while (queue.size() > 1) {
-            TreeNode left = queue.poll();
-            TreeNode right = queue.poll();
-            queue.add(new TreeNode('\0', left.frequency + right.frequency, left, right));
-        }
-
-        return queue.peek();
-    }
-
-    private static void generateCode(TreeNode node, String code, Map<Character, String> map) {
-        if (node == null) return;
-
-        if (node.leftBranch == null && node.rightBranch == null) {
-            map.put(node.value, code.isEmpty() ? "0" : code);
-        }
-
-        generateCode(node.leftBranch, code + "0", map);
-        generateCode(node.rightBranch, code + "1", map);
-    }
-
+    // Главная функция для работы с программой
     public static void main(String[] args) {
         if (args.length != 3 || (!args[0].equals("compress") && !args[0].equals("decompress"))) {
-            System.out.println("Usage: <compress|decompress> <InputFilePath> <OutputFilePath>");
+            System.out.println("Неверный формат. Использование: java HuffmanProcessor <compress|decompress> <InputFile> <OutputFile>");
             return;
         }
 
+        String operation = args[0];
+        String inputFile = args[1];
+        String outputFile = args[2];
+
         try {
-            if ("compress".equals(args[0])) {
-                compress(readFile(args[1]), args[2]);
+            if (operation.equals("compress")) {
+                byte[] fileData = loadFile(inputFile);
+                compress(fileData, outputFile);  // Кодируем файл
             } else {
-                decompress(args[1], args[2]);
+                decompress(inputFile, outputFile);  // Декодируем файл
             }
+            System.out.println("Операция выполнена.");
         } catch (IOException e) {
-            System.err.println("File processing error: " + e.getMessage());
+            System.err.println("Ошибка: " + e.getMessage());
         }
     }
 
-    private static String readFile(String filePath) throws IOException {
-        StringBuilder content = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append("\n");
+    // Загрузка файла в массив байтов
+    private static byte[] loadFile(String filePath) throws IOException {
+        File file = new File(filePath);
+        long length = file.length();
+        if (length > Integer.MAX_VALUE) {
+            throw new IOException("Файл слишком велик.");
+        }
+
+        byte[] fileData = new byte[(int) length];
+        try (FileInputStream fileInputStream = new FileInputStream(file)) {
+            int bytesRead = fileInputStream.read(fileData);
+            if (bytesRead != length) {
+                throw new IOException("Ошибка чтения файла.");
             }
         }
-        return content.toString().trim();
+        return fileData;
     }
 }
